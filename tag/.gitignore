@@ -129,5 +129,7 @@ dmypy.json
 .pyre/
 
 #Pycharm
-/.idea
-/_pycache_
+.idea
+_pycache_
+#custom
+main.py
