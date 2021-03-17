@@ -111,10 +111,10 @@ def tag(wall_rects):
     run=True
     caught=False
     clock=pygame.time.Clock()
+    fps=30
     while run:
-        dt=clock.tick(30)
+        dt=clock.tick(fps)
         #dt=how many ms since last iteration/frame i.e. 30fps atm
-        pygame.time.delay(3)
         for event in pygame.event.get():
             if event.type==pygame.QUIT:
                 run=False
