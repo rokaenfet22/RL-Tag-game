@@ -23,6 +23,7 @@ def tag(wall_rects):
             self.color=color
             self.vx,self.vy=0,0
             self.name=name
+            self.size=size
         def draw(self):
             draw_rect(self.coords,self.color,0)
         def move(self):
@@ -33,8 +34,8 @@ def tag(wall_rects):
         pygame.draw.rect(window,pygame.Color(color),(c[0],c[1],c[2],c[3]),w)
 
     def rect_collision(rect1,rect2): #rect1 = [x,y,x+dx,y+dy]
-        if ((rect1[0] <= rect2[0]+rect2[2]) and (rect1[0] >= rect2[0])) or ((rect1[0]+rect1[2] <= rect2[0]+rect2[2]) and (rect1[0]+rect1[2] >= rect2[0])):
-            if ((rect1[1] <= rect2[1]+rect2[3]) and (rect1[1] >= rect2[1])) or ((rect1[1]+rect1[3] <= rect2[1]+rect2[3]) and (rect1[1]+rect1[3] >= rect2[1])):
+        if ((rect1[0] < rect2[0]+rect2[2]) and (rect1[0] > rect2[0])) or ((rect1[0]+rect1[2] < rect2[0]+rect2[2]) and (rect1[0]+rect1[2] > rect2[0])):
+            if ((rect1[1] < rect2[1]+rect2[3]) and (rect1[1] > rect2[1])) or ((rect1[1]+rect1[3] < rect2[1]+rect2[3]) and (rect1[1]+rect1[3] > rect2[1])):
                 return True
 
     def out_of_bounds(i): #r = Rect
@@ -102,7 +103,7 @@ def tag(wall_rects):
         if not any([rect_collision(c+[seeker_size,seeker_size],n) for n in wall_rects]):
             break
     seeker=Entity(c[0],c[1],seeker_size,"red","seeker")
-    while True: 
+    while True:
         c = [randint(0,window_x-runner_size),randint(0,window_y-runner_size)]
         if not any([rect_collision(c+[runner_size,runner_size],n) for n in wall_rects+[seeker.coords]]):
             break
@@ -123,8 +124,8 @@ def tag(wall_rects):
                     run=False
 
         #keep track of where it was previously
-        seeker.prev_pos=seeker.coords[:2]
-        runner.prev_pos=runner.coords[:2]
+        seeker_temp_prev_pos=seeker.coords[:2]
+        runner_temp_prev_pos=runner.coords[:2]
 
         #update velocity of each entity
         update(pygame.key.get_pressed(),seeker,runner)
@@ -138,34 +139,48 @@ def tag(wall_rects):
         runner.coords=out_of_bounds(runner)
 
         #wall collision, momentum reset if wall hit
-        for n in wall_rects:
-            if rect_collision(seeker.coords,n):
-                t=seeker.coords
-                if rect_collision([seeker.prev_pos[0]]+t[1:],n): #if reverting x fails
-                    if rect_collision([t[0]]+[seeker.prev_pos[1]]+t[2:],n): #if reverting y fails
-                        seeker.coords=seeker.prev_pos+[seeker_size,seeker_size] #revert both
-                        seeker.vx,seeker.vy=0,0
-                    else: #revert only y
-                        seeker.coords=[t[0],seeker.prev_pos[1],seeker_size,seeker_size]
-                        seeker.vy=0
-                else: #revert only x
-                    seeker.coords=[seeker.prev_pos[0],t[1],seeker_size,seeker_size]
-                    seeker.vx=0
-                break
-        
-        for n in wall_rects:
-            if rect_collision(runner.coords,n):
-                t=runner.coords
-                if rect_collision([runner.prev_pos[0]]+t[1:],n): #if reverting x fails
-                    if rect_collision([t[0]]+[runner.prev_pos[1]]+t[2:],n): #if reverting y fails
-                        runner.coords=runner.prev_pos+[runner_size,runner_size] #revert both
-                        runner.vx,runner.vy=0,0
-                    else: #revert y
-                        runner.coords=[t[0],runner.prev_pos[1],runner_size,runner_size]
-                        runner.vy=0
-                else: #rvert x
-                    runner.coords=[runner.prev_pos[0],t[1],runner_size,runner_size]
-                    runner.vx=0
+        for i in (seeker,runner):
+            m=False
+            for n in wall_rects:
+                if rect_collision(i.coords,n):
+                    m=True
+                    t=seeker.coords
+                    if rect_collision([i.prev_pos[0]]+t[1:],n): #if reverting x fails
+                        if rect_collision([t[0]]+[i.prev_pos[1]]+t[2:],n): #if reverting y fails
+                            i.coords=i.prev_pos+[i.size,i.size] #revert both
+                            i.vx,i.vy=0,0
+                        else: #revert only y
+                            i.coords=[t[0],i.prev_pos[1],i.size,i.size]
+                            i.vy=0
+                    else: #revert only x
+                        i.coords=[i.prev_pos[0],t[1],i.size,i.size]
+                        i.vx=0
+                    break
+            if not m:
+                if i.name=="seeker":
+                    i.prev_pos=seeker_temp_prev_pos
+                else:
+                    i.prev_pos=runner_temp_prev_pos
+        """
+        for i in (seeker,runner):
+            for n in wall_rects:
+                if rect_collision(i.coords,n):
+                    
+                    w=[n[0],n[1],n[0]+n[2],n[1]+n[3]]
+                    
+                    if i.vx<0: #moving left
+                        i.coords[0]=w[2]
+                        i.vx=0
+                    elif i.vx>0: #moving right
+                        i.coords[0]=w[0]-i.size
+                        i.vx=0
+                    if i.vy<0: #moving up
+                        i.coords[1]=w[3]
+                        i.vy=0
+                    elif i.vy>0: #moving down
+                        i.coords[1]=w[1]-i.size
+                        i.vy=0
+                    break"""
 
         #check runner being caught
         if rect_collision(seeker.coords,runner.coords):
