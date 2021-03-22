@@ -30,7 +30,7 @@ def tag(wall_rects):
             self.coords[1]+=self.vy
     
     def limitingFunc(x): #limiting function to emulate true acceleration
-        return abs(math.sin(x)/(x))+0.01
+        return pow(math.e, -abs(x/2))
 
     def draw_rect(c,color="black",w=1):
         pygame.draw.rect(window,pygame.Color(color),(c[0],c[1],c[2],c[3]),w)
