@@ -130,4 +130,12 @@ dmypy.json
 
 #Pycharm
 /.idea
-/_pycache_
+/__pycache__
+/dm_tag/__init__.py
+/dm_tag/__pycache__
+/dm_tag/.idea
+
+/dm_tag/models/DQN_tf/__pycache__
+/dm_tag/models/DQN_tf/saved_models
+/dm_tag/models/DQN_tf/tensorboard
+/ytube_vid
