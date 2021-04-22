@@ -38,7 +38,7 @@ class GameWrapper(TagEnv):
         # This adds an element of randomness, so that the each
         # evaluation is slightly different.
         if evaluation:
-            for _ in range(random.randint(0, self.no_op_steps)):
+            for _ in range(self.no_op_steps):
                 self.step(random.randint(0,3),catcher=True)
             #runner random start position
             runner_pos=(random.randint(0,self.screen_size[0]),random.randint(0,self.screen_size[0]))
@@ -49,7 +49,7 @@ class GameWrapper(TagEnv):
 def dense_layer(num_units):
   return Dense(
       num_units,
-      activation='relu',
+      activation='tanh',
       kernel_initializer=VarianceScaling(
           scale=2.0, mode='fan_in', distribution='truncated_normal'))
 
@@ -66,6 +66,7 @@ def build_q_network(n_actions, learning_rate, input_shape, screen_size):
     x = Lambda(lambda layer: layer / screen_size[0])(model_input)  # normalize by screen size
 
     x = dense_layer(50)(model_input)
+    x = dense_layer(50)(x)
     x = dense_layer(50)(x)
     # Split into value and advantage streams
     # val_stream, adv_stream = Lambda(lambda w: tf.split(w, 2, 1))(x)  # custom splitting layer
@@ -92,12 +93,14 @@ class ReplayBuffer:
     """Replay Buffer to store transitions.
     This implementation was heavily inspired by Fabio M. Graetz's replay buffer
     here: https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb"""
-    def __init__(self, size, input_shape):
+    def __init__(self, size, input_shape,use_per=False):
         """
         Arguments:
             size: Integer, Number of stored transitions
             input_shape: Shape of the preprocessed frame
+            use_per:User Priority Experience Replay instead of simple
         """
+        self.use_per=use_per
         self.size = size
         self.input_shape = input_shape
         self.count = 0  # total index of memory written to, always less than self.size
@@ -108,6 +111,7 @@ class ReplayBuffer:
         self.rewards = np.empty(self.size, dtype=np.float32)
         self.frames = np.empty((self.size, self.input_shape[0]), dtype=np.int8)
         self.terminal_flags = np.empty(self.size, dtype=np.bool)
+        self.priorities = np.zeros(self.size, dtype=np.float32)
 
     def add_experience(self, action, frame, reward, terminal, clip_reward=True):
         """Saves a transition to the replay buffer
@@ -131,15 +135,21 @@ class ReplayBuffer:
         self.terminal_flags[self.current] = terminal
         self.count = max(self.count, self.current+1)
         self.current = (self.current + 1) % self.size
+        self.priorities[self.current] = max(self.priorities.max(), 1)  # make the most recent experience important
 
-    def get_minibatch(self, batch_size):
+
+    def get_minibatch(self, batch_size,priority_scale=0.0):
         """Returns a minibatch of self.batch_size = 2transitions
         Arguments:
             batch_size: How many samples to return
+            priority_scale: How much to weight priorities. 0 = completely random, 1 = completely based on priority
         Returns:
             A tuple of states, actions, rewards, new_states, and terminals
         """
-
+        # Get sampling probabilities from priority list
+        if self.use_per:
+            scaled_priorities = self.priorities ** priority_scale
+            sample_probabilities = scaled_priorities / sum(scaled_priorities)
         # Get a list of valid indices
         indices = []
         for i in range(batch_size):
@@ -161,9 +171,25 @@ class ReplayBuffer:
             states.append(self.frames[idx-1:idx][0])
             new_states.append(self.frames[idx:idx+1][0])
 
+        if self.use_per:
+            # Get importance weights from probabilities calculated earlier
 
-        return np.array(states), self.actions[indices], self.rewards[indices], np.array(new_states), self.terminal_flags[indices]
+            importance = (1 / self.count) * (1 / sample_probabilities[[index for index in indices]])
+            importance = importance / importance.max()
 
+            return (np.array(states), self.actions[indices], self.rewards[indices], np.array(new_states),
+                    self.terminal_flags[indices]), importance, indices
+        else:
+            return np.array(states), self.actions[indices], self.rewards[indices], np.array(new_states), self.terminal_flags[indices]
+
+    def set_priorities(self, indices, errors, offset=0.1):
+        """Update priorities for PER
+        Arguments:
+            indices: Indices to update
+            errors: For each index, the error between the target Q-vals and the predicted Q-vals
+        """
+        for i, e in zip(indices, errors):
+            self.priorities[i] = abs(e) + offset
 
     def save(self, folder_name):
         """Save the replay buffer to a folder"""
@@ -193,6 +219,7 @@ class Agent(object):
                  input_shape,
                  batch_size,
                  eps_initial=1,
+                 use_per=False,
                  eps_final=0.1,
                  eps_final_frame=0.01,
                  eps_evaluation=0.0,
@@ -223,7 +250,7 @@ class Agent(object):
         self.replay_buffer_start_size = replay_buffer_start_size
         self.max_frames = max_frames
         self.batch_size = batch_size
-
+        self.use_per=use_per
         self.replay_buffer = replay_buffer
 
         # Epsilon information
@@ -311,18 +338,23 @@ class Agent(object):
         """Wrapper function for adding an experience to the Agent's replay buffer"""
         self.replay_buffer.add_experience(action, frame, reward, terminal, clip_reward)
 
-    def learn(self, batch_size, gamma, frame_number):
+    def learn(self, batch_size, gamma, frame_number,priority_scale=1.0):
         """Sample a batch and use it to improve the DQN
         Arguments:
             batch_size: How many samples to draw for an update
             gamma: Reward discount
             frame_number: Global frame number (used for calculating importances)
+            priority_scale: How much to weight priorities when sampling the replay buffer. 0 = completely random, 1 = completely based on priority
         Returns:
             The loss between the predicted and target Q as a float
         """
 
-
-        states, actions, rewards, new_states, terminal_flags = self.replay_buffer.get_minibatch(batch_size=self.batch_size)
+        if self.use_per:
+            (states, actions, rewards, new_states,terminal_flags), importance, indices = self.replay_buffer.get_minibatch(batch_size=self.batch_size,
+                                                                       priority_scale=priority_scale)
+            importance = importance ** (1 - self.calc_epsilon(frame_number))
+        else:
+            states, actions, rewards, new_states, terminal_flags = self.replay_buffer.get_minibatch(batch_size=self.batch_size)
         # Main DQN estimates best action in new states
         arg_q_max = self.DQN.predict(new_states).argmax(axis=1)
 
@@ -342,10 +374,16 @@ class Agent(object):
 
             error = Q - target_q
             loss = tf.keras.losses.Huber()(target_q, Q)
+            if self.use_per:
+                # Multiply the loss by importance, so that the gradient is also scaled.
+                # The importance scale reduces bias against situataions that are sampled
+                # more frequently.
+                loss = tf.reduce_mean(loss * importance)
 
         model_gradients = tape.gradient(loss, self.DQN.trainable_variables)
         self.DQN.optimizer.apply_gradients(zip(model_gradients, self.DQN.trainable_variables))
-
+        if self.use_per:
+            self.replay_buffer.set_priorities(indices, error)
         return float(loss.numpy()), error
 
     def save(self, folder_name, **kwargs):

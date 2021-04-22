@@ -11,7 +11,8 @@ def train():
     TENSORBOARD_DIR = 'tensorboard/'
 
     CLIP_REWARD = True                # Any positive reward is +1, and negative reward is -1, 0 is unchanged
-
+    USE_PER=True                     # Use Priority Experience Replay
+    PRIORITY_SCALE=0.5               #How much to weight priorities when sampling the replay buffer. 0 = completely random, 1 = completely based on priority
     #hyper
     TOTAL_FRAMES = 300000          #Total number of frames to train for
     MAX_EPISODE_LENGTH = 100       # Maximum length of an episode (in frames).  18000 frames / 60 fps = 5 minutes
@@ -58,8 +59,8 @@ def train():
 
     TARGET_DQN = build_q_network(game_wrapper.action_space.n, learning_rate=LEARNING_RATE,input_shape=INPUT_SHAPE,screen_size=screen_size)
 
-    replay_buffer = ReplayBuffer(size=MEM_SIZE, input_shape=INPUT_SHAPE)
-    agent = Agent(MAIN_DQN, TARGET_DQN, replay_buffer, game_wrapper.action_space.n, input_shape=INPUT_SHAPE, batch_size=BATCH_SIZE)
+    replay_buffer = ReplayBuffer(size=MEM_SIZE, input_shape=INPUT_SHAPE,use_per=USE_PER)
+    agent = Agent(MAIN_DQN, TARGET_DQN, replay_buffer, game_wrapper.action_space.n, input_shape=INPUT_SHAPE, batch_size=BATCH_SIZE,use_per=USE_PER)
 
     # TRAINING
     frame_number = 0
@@ -94,7 +95,7 @@ def train():
 
                   # Update agent
                   if frame_number % UPDATE_FREQ == 0 and agent.replay_buffer.count > MIN_REPLAY_BUFFER_SIZE:
-                      loss, _ = agent.learn(BATCH_SIZE, gamma=DISCOUNT_FACTOR, frame_number=frame_number)
+                      loss, _ = agent.learn(batch_size=BATCH_SIZE, gamma=DISCOUNT_FACTOR, frame_number=frame_number,priority_scale=PRIORITY_SCALE)
 
                   # Update target network
                   if frame_number % TARGET_UPDATE_FREQ == 0 and frame_number > MIN_REPLAY_BUFFER_SIZE:
