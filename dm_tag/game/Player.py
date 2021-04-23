@@ -17,6 +17,10 @@ class Runner(object):
     def set_pos(self,x,y):
         self.rect.x=x
         self.rect.y=y
+        self.x=x
+        self.y=y
+    def get_rect(self):
+        return self.rect
     def accelerate(self,ax,ay):
         self.vx+=ax
         self.vy+=ay
@@ -27,6 +31,7 @@ class Runner(object):
         has_collided1=self.move_single_axis(self.vx, 0,screen_size,walls)
 
         has_collided=self.move_single_axis(0, self.vy,screen_size,walls)
+
         return has_collided1|has_collided
 
     def move_single_axis(self, dx, dy,screen_size,walls):
@@ -45,6 +50,7 @@ class Runner(object):
             has_collied=True
         if self.rect.y < 0:
             self.rect.y = 0
+            self.vy=0
             has_collied = True
         if self.rect.y+self.size > screen_size[1]:
             self.vy=0
@@ -68,6 +74,8 @@ class Runner(object):
                 if dy < 0:
                     self.rect.top = wall_rect.bottom
                     self.vy=0
+        self.x=self.rect.x
+        self.y=self.rect.y
         return has_collied
 class Catcher(Runner):
     def __init__(self,x,y,color,size):

@@ -10,17 +10,16 @@ def train():
     WRITE_TENSORBOARD = False
     TENSORBOARD_DIR = 'tensorboard/'
 
-    CLIP_REWARD = True                # Any positive reward is +1, and negative reward is -1, 0 is unchanged
     USE_PER=True                     # Use Priority Experience Replay
     PRIORITY_SCALE=0.5               #How much to weight priorities when sampling the replay buffer. 0 = completely random, 1 = completely based on priority
     #hyper
     TOTAL_FRAMES = 300000          #Total number of frames to train for
-    MAX_EPISODE_LENGTH = 100       # Maximum length of an episode (in frames).  18000 frames / 60 fps = 5 minutes
+    MAX_EPISODE_LENGTH = 50       # Maximum length of an episode (in frames).  18000 frames / 60 fps = 5 minutes
     FRAMES_BETWEEN_EVAL = 5000     # Number of frames between evaluations
-    EVAL_LENGTH = 900              # Number of frames to evaluate for
-
-    DISCOUNT_FACTOR = 0.98            # Gamma, how much to discount future rewards
-    MIN_REPLAY_BUFFER_SIZE = 100    # The minimum size the replay buffer must be before we start to update the agent
+    EVAL_LENGTH = 500              # Number of frames to evaluate for
+    eps_annealing_frames=100000
+    DISCOUNT_FACTOR = 0.4            # Gamma, how much to discount future rewards
+    MIN_REPLAY_BUFFER_SIZE = 400    # The minimum size the replay buffer must be before we start to update the agent
     MEM_SIZE = 1000000                # The maximum size of the replay buffer
 
     MAX_NOOP_STEPS = 1               # Randomly perform this number of actions before every evaluation to give it an element of randomness
@@ -29,7 +28,7 @@ def train():
 
     INPUT_SHAPE = (8,)            # Size of the preprocessed input frame. With the current model architecture, anything below ~80 won't work.
     screen_size = (5, 5)
-    BATCH_SIZE = 1               # Number of samples the agent learns from at once
+    BATCH_SIZE = 4               # Number of samples the agent learns from at once
     LEARNING_RATE = 0.001
     STALLING_PENALTY = 0.05*screen_size[0]   #penalty for every step the agent takes. Proportional to the frame number
 
@@ -60,7 +59,8 @@ def train():
     TARGET_DQN = build_q_network(game_wrapper.action_space.n, learning_rate=LEARNING_RATE,input_shape=INPUT_SHAPE,screen_size=screen_size)
 
     replay_buffer = ReplayBuffer(size=MEM_SIZE, input_shape=INPUT_SHAPE,use_per=USE_PER)
-    agent = Agent(MAIN_DQN, TARGET_DQN, replay_buffer, game_wrapper.action_space.n, input_shape=INPUT_SHAPE, batch_size=BATCH_SIZE,use_per=USE_PER)
+    agent = Agent(MAIN_DQN, TARGET_DQN, replay_buffer, game_wrapper.action_space.n, input_shape=INPUT_SHAPE, batch_size=BATCH_SIZE,use_per=USE_PER,replay_buffer_start_size=MIN_REPLAY_BUFFER_SIZE,eps_annealing_frames=eps_annealing_frames)
+    #agent.load('saved_models/tag1/navigation/save-00005049/')
 
     # TRAINING
     frame_number = 0
@@ -72,7 +72,7 @@ def train():
           epoch_frame = 0
           while epoch_frame < FRAMES_BETWEEN_EVAL:
               start_time = time.time()
-              game_wrapper.reset()
+              game_wrapper.reset(rand=True)
               episode_reward_sum = 0
               for i in range(MAX_EPISODE_LENGTH):
                   # Get action
@@ -81,17 +81,17 @@ def train():
                   state = np.reshape(state, (1, 8))
                   action = agent.get_action(frame_number, state)
                   # Take step
-                  new_state, reward, terminal, life_lost = game_wrapper.step(action)
+                  new_state, reward, terminal, info = game_wrapper.step(action)
                   new_state=np.array(new_state)
-                  reward=reward - i*STALLING_PENALTY #penalty proportional to the current episode frame number
+                  #reward=reward - i*STALLING_PENALTY #penalty proportional to the current episode frame number
                   frame_number += 1
                   epoch_frame += 1
                   episode_reward_sum += reward
                   # Add experience to replay memory
                   agent.add_experience(action=action,
                                       frame=new_state,
-                                      reward=reward, clip_reward=CLIP_REWARD,
-                                      terminal=life_lost)
+                                      reward=reward,
+                                      terminal=terminal)
 
                   # Update agent
                   if frame_number % UPDATE_FREQ == 0 and agent.replay_buffer.count > MIN_REPLAY_BUFFER_SIZE:
@@ -110,12 +110,6 @@ def train():
               rewards.append(episode_reward_sum)
               # Output the progress every 10 games
               if len(rewards) % 10 == 0:
-                  # Write to TensorBoard
-                  if WRITE_TENSORBOARD:
-                      tf.summary.scalar('Reward', np.mean(rewards[-10:]), frame_number)
-                      tf.summary.scalar('Loss', np.mean(loss_list[-100:]), frame_number)
-                      writer.flush()
-
                   print(f'Game number: {str(len(rewards)).zfill(6)}  Frame number: {str(frame_number).zfill(8)}  Average reward: {np.mean(rewards[-10:]):0.1f}  Time taken: {(time.time() - start_time):.1f}s')
 
           # Save model
@@ -128,24 +122,24 @@ def train():
           evaluate_frame_number = 0
           for _ in range(EVAL_LENGTH):
               if terminal:
-                  game_wrapper.reset(evaluation=True)
+                  game_wrapper.reset(rand=True)
                   episode_reward_sum = 0
-                  episode_frame_number=0
-                  terminal = False
-              state=np.array(game_wrapper.get_state())
-              state=np.reshape(state,(1,8))
+                  episode_frame_number = 0
+                  terminal=False
+              state=np.reshape(np.array(game_wrapper.get_state()),(1,8))
               action=agent.get_action(frame_number, state, evaluation=True)
               # Step action
-              _, reward, terminal, life_lost = game_wrapper.step(action)
+              _, reward, terminal, info = game_wrapper.step(action)
               episode_frame_number+=1
-              reward=reward-episode_frame_number*STALLING_PENALTY
+              #reward=reward-episode_frame_number*STALLING_PENALTY
               evaluate_frame_number += 1
               episode_reward_sum += reward
 
               # On game-over
               if terminal:
-                  terminal=True
                   eval_rewards.append(episode_reward_sum)
+                  game_wrapper.reset(rand=True)
+
 
           if len(eval_rewards) > 0:
               final_score = np.mean(eval_rewards)
@@ -154,10 +148,5 @@ def train():
               final_score = episode_reward_sum
           # Print score and write to tensorboard
           print('Evaluation score:', final_score)
-          if WRITE_TENSORBOARD:
-              tf.summary.scalar('Evaluation score', final_score, frame_number)
-              writer.flush()
-
-
 
 train()

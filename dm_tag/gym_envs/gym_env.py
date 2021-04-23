@@ -1,9 +1,9 @@
 import gym
 import pygame
-import time,random
 from gym import error, spaces, utils
 import numpy as np
-from game.Player import Catcher, Runner
+import time,random
+from game.Player import Runner,Catcher
 
 
 
@@ -19,7 +19,7 @@ class TagEnv(gym.Env):
         self.a=acceleration
         self.runner = runner
         self.wall_list = wall_list
-        self.screen_size=screen_size
+        self.screen_size=np.array(screen_size)
         self.screen=screen
         self.state=self.get_init_state()
         self.action_space = spaces.Discrete(4)
@@ -51,7 +51,7 @@ class TagEnv(gym.Env):
             player=self.catcher
         else:
             player=self.runner
-
+        prev_state=self.state
         if action==0:#UP
             player.accelerate(0, -self.a)
         elif action==1:#RIGHT
@@ -76,9 +76,9 @@ class TagEnv(gym.Env):
             else:
                 reward=-100000
         else:
-            reward=self.calculate_reward(catcher=catcher)
+            reward=self.calculate_reward(catcher=catcher,prev_state=prev_state)
             if has_collided: #if the agent collides with wall, give 0 reward
-                reward=0
+                reward=-100
         return self.state,reward,done,info
 
     def reset(self):
@@ -90,14 +90,39 @@ class TagEnv(gym.Env):
         self.catcher.reset_v()
         return self.state
 
-    def calculate_reward(self,catcher=True):
+
+
+    # def calculate_reward(self,catcher=True):
+    #     catcher_pos = np.array(self.catcher.get_pos())
+    #     runner_pos = np.array(self.runner.get_pos())
+    #     distance=float((np.sum((catcher_pos - runner_pos) ** 2)) ** (1 / 2))
+    #     if catcher:
+    #         return float((self.screen_size[1]*1.5)) - distance
+    #     else:
+    #         return distance
+    def calculate_reward(self,prev_state,catcher=True):
+        reward=float(np.sqrt(np.sum(self.screen_size**2)))
+        prev_catcher_pos=prev_state[[0,1]]
+        prev_runner_pos=prev_state[[2,3]]
+        prev_distance=float((np.sum((prev_catcher_pos - prev_runner_pos) ** 2)) ** (1 / 2))
         catcher_pos = np.array(self.catcher.get_pos())
         runner_pos = np.array(self.runner.get_pos())
-        distance=float((np.sum((catcher_pos - runner_pos) ** 2)) ** (1 / 2))
-        if catcher:
-            return float((self.screen_size[1]*1.5)) - distance
+        distance = float((np.sum((catcher_pos - runner_pos) ** 2)) ** (1 / 2))
+        if prev_distance>distance:
+            if catcher:
+                return reward
+            else:
+                return -reward
+        elif prev_distance<distance:
+            if catcher:
+                return -reward
+            else:
+                return reward
         else:
-            return distance
+            if catcher:
+                return -10
+            else:
+                return 10
 
     def get_state(self):
         '''reduced state format. Doesn't account for walls
@@ -106,65 +131,73 @@ class TagEnv(gym.Env):
         state = [self.catcher.get_pos()[0], self.catcher.get_pos()[1], self.runner.get_pos()[0],
                  self.runner.get_pos()[1], self.catcher.get_v()[0], self.catcher.get_v()[1],
                  self.runner.get_v()[0], self.runner.get_v()[1]]
-        return state
+        return np.array(state)
     def get_init_state(self):
         '''reduced state format. Doesn't account for walls
         [catcher_x,catcher_y,runner_x,runner_y,catcher_vx,catcher_vy,runner_vx,runner_vy]
         '''
         state = [self.init_catcher_pos[0], self.init_catcher_pos[1], self.init_runner_pos[0], self.init_runner_pos[1], 0, 0, 0, 0]
-        return state
+        return np.array(state)
 
-    def render(self,mode='human'):
+    def render(self,mode='human',len_scale_factor=1):
         # Draw the scene
         self.screen.fill((255, 255, 255))
+
         # fill screen excess black since there is a minimum width a screen in pygame can be
-        if self.screen.get_size() != (self.screen_size[0],self.screen_size[1]):
-            r = pygame.Rect(self.screen_size[0], 0, self.screen.get_size()[0] - self.screen_size[0],
-                            self.screen_size[1])
+        if self.screen.get_size() != (self.screen_size[0]*len_scale_factor,self.screen_size[1]*len_scale_factor):
+            r = pygame.Rect(self.screen_size[0]*len_scale_factor, 0, self.screen.get_size()[0] - self.screen_size[0]*len_scale_factor,
+                            self.screen_size[1]*len_scale_factor)
             pygame.draw.rect(self.screen, (0, 0, 0), r)
         for wall in self.wall_list:
             #wall format : [top left x,top left y,width,height ]
-            wall_rect = pygame.Rect(wall[0], wall[1], wall[2], wall[3])
+            wall_rect = pygame.Rect(wall[0]*len_scale_factor, wall[1]*len_scale_factor, wall[2]*len_scale_factor, wall[3]*len_scale_factor)
             pygame.draw.rect(self.screen, (0, 0, 0), wall_rect)
-        pygame.draw.rect(self.screen, self.catcher.color, self.catcher.rect)
-        pygame.draw.rect(self.screen, self.runner.color, self.runner.rect)
+
+        catcher_rect=pygame.Rect(self.catcher.x*len_scale_factor, self.catcher.y*len_scale_factor, self.catcher.size*len_scale_factor, self.catcher.size*len_scale_factor)
+        runner_rect=pygame.Rect(self.runner.x*len_scale_factor, self.runner.y*len_scale_factor, self.runner.size*len_scale_factor, self.runner.size*len_scale_factor)
+        pygame.draw.rect(self.screen, self.catcher.color, catcher_rect)
+        pygame.draw.rect(self.screen, self.runner.color, runner_rect)
         pygame.display.flip()
 
     def close(self):
         pass
 # screen_size=(10,10)
-# init_it_pos=(3,3)
-# incatcher_pos=(7,7)
+# init_catcher_pos=(8,8)
+# init_runner_pos=(9,9)
 # max_walls=7
-#
+# len_scale_factor=10
 #
 # #game parameters
 # player_size=1
 # wall_thickness=1
-# walls=[[8.333333333333332, 8.333333333333332, 8.333333333333332, 2.666666666666667], [8.333333333333332, 8.333333333333332, 2.666666666666667, 8.333333333333332], [0, 25.0, 16.666666666666664, 2.666666666666667], [38.333333333333336, 18.333333333333332, 10.0, 2.666666666666667], [38.333333333333336, 5.0, 2.666666666666667, 13.333333333333334], [16.666666666666664, 38.333333333333336, 15.0, 2.666666666666667], [31.666666666666664, 30.0, 2.666666666666667, 8.333333333333332]]
+# walls1=np.array([[0, 2, 3, 1], [2, 3, 1, 2], [4, 4,1, 3], [6, 2, 4, 1], [2,8, 3, 1]])  #constructed on a 10x10 grid
+# walls=(walls1/10)*screen_size[0]   #scale the walls according to screen size
 # player_a=1
 # #set up the player objects
-# catcher=IT(init_it_pos[0],init_it_pos[1],[255,0,0],player_size)
-# player1=Player(incatcher_pos[0],incatcher_pos[1],[0,0,255],player_size)
+# catcher=Catcher(init_catcher_pos[0],init_catcher_pos[1],[255,0,0],player_size)
+# runner=Runner(init_runner_pos[0],init_runner_pos[1],[0,0,255],player_size)
 # pygame.init()
 # # Set up the display
 # pygame.display.set_caption("Tag")
-# screen = pygame.display.set_mode((screen_size[0], screen_size[1]))
+# screen = pygame.display.set_mode((screen_size[0]*len_scale_factor, screen_size[1]*len_scale_factor))
 # #init gym environment
-# env = TagEnv(catcher,player1,[],screen_size,acceleration=player_a,screen=screen,incatcher_pos=incatcher_pos,init_it_pos=init_it_pos)
+# env = TagEnv(catcher,runner,wall_list=walls,screen_size=screen_size,acceleration=player_a,screen=screen,init_catcher_pos=init_catcher_pos,init_runner_pos=init_runner_pos)
 #
 # observation = env.reset()
+# env.render(len_scale_factor=len_scale_factor)
+# time.sleep(2)
+# print(catcher.rect.colliderect(runner.rect))
 # for t in range(10000):
-#         env.render()
-#         time.sleep(0.01)
+#         time.sleep(0.1)
 #         action = env.action_space.sample()
 #         print(action)
 #         observation, reward, done, info = env.step(action)
 #         print (observation, reward, done, info)
+#         env.render(len_scale_factor=len_scale_factor)
+#
 #         if done:
 #             print("Finished after {} timesteps".format(t+1))
 #             env.reset()
-#             env.render()
 #             time.sleep(2)
 #             break
 #

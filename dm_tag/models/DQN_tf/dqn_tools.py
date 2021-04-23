@@ -26,10 +26,10 @@ class GameWrapper(TagEnv):
         super(GameWrapper, self).__init__(catcher,runner,wall_list,screen_size,acceleration,screen,init_catcher_pos=init_catcher_pos,init_runner_pos=init_runner_pos)
         self.no_op_steps = no_op_steps
 
-    def reset(self, evaluation=False):
+    def reset(self, rand=False):
         """Resets the environment
         Arguments:
-            evaluation: Set to True when the agent is being evaluated. Takes a random number of no-op steps if True.
+            rand: randomise starting pos of catcher and runner
         """
 
         super(GameWrapper, self).reset()
@@ -37,13 +37,14 @@ class GameWrapper(TagEnv):
         # If evaluating, take a random number of no-op steps.
         # This adds an element of randomness, so that the each
         # evaluation is slightly different.
-        if evaluation:
-            for _ in range(self.no_op_steps):
-                self.step(random.randint(0,3),catcher=True)
+        if rand:
+            #catcher random start pos
+            catcher_pos=(random.randint(0,self.screen_size[0]-self.catcher.size),random.randint(0,self.screen_size[0]-self.catcher.size))
             #runner random start position
-            runner_pos=(random.randint(0,self.screen_size[0]),random.randint(0,self.screen_size[0]))
+            runner_pos=(random.randint(0,self.screen_size[0]-self.runner.size),random.randint(0,self.screen_size[0]-self.runner.size))
             while runner_pos==self.catcher.get_pos():#make sure the position of runner isn't the same as pos of catcher
                 runner_pos = (random.randint(0, self.screen_size[0]), random.randint(0, self.screen_size[0]))
+            self.catcher.set_pos(catcher_pos[0],catcher_pos[1])
             self.runner.set_pos(runner_pos[0],runner_pos[1])
 
 def dense_layer(num_units):
@@ -113,20 +114,18 @@ class ReplayBuffer:
         self.terminal_flags = np.empty(self.size, dtype=np.bool)
         self.priorities = np.zeros(self.size, dtype=np.float32)
 
-    def add_experience(self, action, frame, reward, terminal, clip_reward=True):
+    def add_experience(self, action, frame, reward, terminal):
         """Saves a transition to the replay buffer
         Arguments:
             action: An integer between 0 and env.action_space.n - 1
                 determining the action the agent perfomed
-            frame: A (8,1) frame of the game in grayscale
-            reward: A float determining the reward the agend received for performing an action
+            frame: A (8,1) state of the game
+            reward: A float determining the reward the agent received for performing an action
             terminal: A bool stating whether the episode terminated
         """
         if frame.shape != self.input_shape:
             raise ValueError('Dimension of frame is wrong!')
 
-        if clip_reward:
-            reward = np.sign(reward)
 
         # Write memory
         self.actions[self.current] = action
@@ -139,7 +138,7 @@ class ReplayBuffer:
 
 
     def get_minibatch(self, batch_size,priority_scale=0.0):
-        """Returns a minibatch of self.batch_size = 2transitions
+        """Returns a minibatch of batch_size transitions
         Arguments:
             batch_size: How many samples to return
             priority_scale: How much to weight priorities. 0 = completely random, 1 = completely based on priority
@@ -148,19 +147,16 @@ class ReplayBuffer:
         """
         # Get sampling probabilities from priority list
         if self.use_per:
-            scaled_priorities = self.priorities ** priority_scale
+            scaled_priorities = self.priorities[:self.count-2] ** priority_scale
             sample_probabilities = scaled_priorities / sum(scaled_priorities)
         # Get a list of valid indices
         indices = []
         for i in range(batch_size):
             while True:
-                index = random.randint(1, self.count - 1)
-
-                # We check that all frames are from same episode with the two following if statements.  If either are True, the index is invalid.
-                if index >= self.current and index - 1 <= self.current:
-                    continue
-                if self.terminal_flags[index - 1:index].any():
-                    continue
+                if self.use_per:
+                    index = np.random.choice(np.arange(0, self.count-2), p=sample_probabilities)
+                else:
+                    index = random.randint(0, self.count - 1)
                 break
             indices.append(index)
 
@@ -168,15 +164,13 @@ class ReplayBuffer:
         states = []
         new_states = []
         for idx in indices:
-            states.append(self.frames[idx-1:idx][0])
-            new_states.append(self.frames[idx:idx+1][0])
+            states.append(self.frames[idx])
+            new_states.append(self.frames[idx+1])
 
         if self.use_per:
             # Get importance weights from probabilities calculated earlier
-
-            importance = (1 / self.count) * (1 / sample_probabilities[[index for index in indices]])
-            importance = importance / importance.max()
-
+            importance = (1 / self.count) * (1 / sample_probabilities[indices])
+            importance = importance / importance.max()  #scale it so it's between 0 and 1
             return (np.array(states), self.actions[indices], self.rewards[indices], np.array(new_states),
                     self.terminal_flags[indices]), importance, indices
         else:
@@ -218,13 +212,12 @@ class Agent(object):
                  n_actions,
                  input_shape,
                  batch_size,
+                 replay_buffer_start_size,
+                 use_per,
+                 eps_annealing_frames,
                  eps_initial=1,
-                 use_per=False,
                  eps_final=0.1,
                  eps_final_frame=0.01,
-                 eps_evaluation=0.0,
-                 eps_annealing_frames=1000000,
-                 replay_buffer_start_size=50000,
                  max_frames=25000000):
         """
         Arguments:
@@ -257,7 +250,6 @@ class Agent(object):
         self.eps_initial = eps_initial
         self.eps_final = eps_final
         self.eps_final_frame = eps_final_frame
-        self.eps_evaluation = eps_evaluation
         self.eps_annealing_frames = eps_annealing_frames
 
         # Slopes and intercepts for exploration decrease
@@ -280,7 +272,7 @@ class Agent(object):
             The appropriate epsilon value
         """
         if evaluation:
-            return self.eps_evaluation
+            return 0
         elif frame_number < self.replay_buffer_start_size:
             return self.eps_initial
         elif frame_number >= self.replay_buffer_start_size and frame_number < self.replay_buffer_start_size + self.eps_annealing_frames:
@@ -298,7 +290,6 @@ class Agent(object):
             An integer as the predicted move
         """
 
-        # Calculate epsilon based on the frame number
         eps = self.calc_epsilon(frame_number, evaluation)
 
         # With chance epsilon, take a random action
@@ -308,6 +299,11 @@ class Agent(object):
         # Otherwise, query the DQN for an action
         q_vals = self.DQN.predict(state)[0]
         return q_vals.argmax()
+    def get_importance_bias(self,frame_number):
+        start=0.5
+        annealing_frame=75000
+        bias=(np.tanh(frame_number/750)*(1/2))+0.5
+        return bias
 
     def get_intermediate_representation(self, state, layer_names=None):
         """
@@ -334,9 +330,9 @@ class Agent(object):
         """Update the target Q network"""
         self.target_dqn.set_weights(self.DQN.get_weights())
 
-    def add_experience(self, action, frame, reward, terminal, clip_reward=True):
+    def add_experience(self, action, frame, reward, terminal):
         """Wrapper function for adding an experience to the Agent's replay buffer"""
-        self.replay_buffer.add_experience(action, frame, reward, terminal, clip_reward)
+        self.replay_buffer.add_experience(action, frame, reward, terminal)
 
     def learn(self, batch_size, gamma, frame_number,priority_scale=1.0):
         """Sample a batch and use it to improve the DQN
@@ -352,7 +348,7 @@ class Agent(object):
         if self.use_per:
             (states, actions, rewards, new_states,terminal_flags), importance, indices = self.replay_buffer.get_minibatch(batch_size=self.batch_size,
                                                                        priority_scale=priority_scale)
-            importance = importance ** (1 - self.calc_epsilon(frame_number))
+            importance = importance ** (self.get_importance_bias(frame_number))
         else:
             states, actions, rewards, new_states, terminal_flags = self.replay_buffer.get_minibatch(batch_size=self.batch_size)
         # Main DQN estimates best action in new states
@@ -369,7 +365,7 @@ class Agent(object):
         with tf.GradientTape() as tape:
             q_values = self.DQN(states)
 
-            one_hot_actions = tf.keras.utils.to_categorical(actions, self.n_actions, dtype=np.float32)  # using tf.one_hot causes strange errors
+            one_hot_actions = tf.keras.utils.to_categorical(actions, self.n_actions, dtype=np.float32)
             Q = tf.reduce_sum(tf.multiply(q_values, one_hot_actions), axis=1)
 
             error = Q - target_q
