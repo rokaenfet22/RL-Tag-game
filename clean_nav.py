@@ -8,7 +8,7 @@ import math
 """
 NOTE: this is navigation agent for chaser -> target.
 ACTION: up,down,left,right = 0,1,2,3
-STATE: [cy,cx,ry,rx,direc] = chaser x, chaser y, runner x, runner y, direction looking from chaser to runner
+STATE: [cy,cx,ry,rx,direc] = chaser y, chaser x, runner y, runner x, direction looking from chaser to runner
 RESULT: Agent reliably taking optimal route to target/runner pos after around 1~3k episodes of training. (haven't tested when, but it does work :))
 
 + = open space
