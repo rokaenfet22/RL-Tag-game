@@ -1,4 +1,5 @@
 import pygame
+import numpy as np
 
 class Runner(object):
     def __init__(self,x,y,color,size):
@@ -27,13 +28,21 @@ class Runner(object):
     def reset_v(self):
         self.vx=0
         self.vy=0
-    def move(self,screen_size,walls):
-        has_collided1=self.move_single_axis(self.vx, 0,screen_size,walls)
+    # def move(self,screen_size,walls):
+    #     self.vx,self.vy=np.sign(self.vx),np.sign(self.vy)
+    #
+    #     has_collided1=self.move_single_axis(self.vx, 0,screen_size,walls)
+    #
+    #     has_collided=self.move_single_axis(0, self.vy,screen_size,walls)
+    #
+    #     return has_collided1|has_collided
 
-        has_collided=self.move_single_axis(0, self.vy,screen_size,walls)
+    def move(self,screen_size,walls,dx,dy):
+        has_collided1=self.move_single_axis(dx, 0,screen_size,walls)
+
+        has_collided=self.move_single_axis(0, dy,screen_size,walls)
 
         return has_collided1|has_collided
-
     def move_single_axis(self, dx, dy,screen_size,walls):
         has_collied=False
         # Move the rect

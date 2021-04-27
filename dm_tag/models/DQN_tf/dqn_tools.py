@@ -14,38 +14,224 @@ from tensorflow.keras.optimizers import Adam
 from gym_envs.gym_env import TagEnv
 
 import json
-
+import pygame
 import os
 import random
 import numpy as np
 
+def calc_distance(p1,p2):#eucledian distance between p1 and p2
+    p1,p2=np.array(p1),np.array(p2)
+    return np.sqrt(np.sum((p2-p1)**2))
 
 class GameWrapper(TagEnv):
-    def __init__(self,catcher,runner,wall_list,screen_size,acceleration,screen,init_catcher_pos,init_runner_pos,no_op_steps):
+    def __init__(self,catcher,runner,wall_list,screen_size,acceleration,screen,init_catcher_pos,init_runner_pos):
         #no_op_steps is the number of random steps the catcher makes when environment is reset to add some randomness
         super(GameWrapper, self).__init__(catcher,runner,wall_list,screen_size,acceleration,screen,init_catcher_pos=init_catcher_pos,init_runner_pos=init_runner_pos)
-        self.no_op_steps = no_op_steps
 
-    def reset(self, rand=False):
-        """Resets the environment
-        Arguments:
-            rand: randomise starting pos of catcher and runner
-        """
+    def get_state(self,reduced=True,catcher=True):#using vision . if reduced (1,20)   else: (1,28)
+        #state=[catcher_x,catcher_y,runner_x,runner_y,catcher_vx,catcher_vy,runner_vx,runner_vy,
+    #           N,NE,E,SE,S,SW,W,NW,
+    #           N_distance, NE_distance, E_distance, SE_distance, S_distance, SW_distance, W_disstance, NW_distance]
+        directions, distances = self.get_vision(catcher=catcher)
 
-        super(GameWrapper, self).reset()
+        if reduced:
+            state=super(GameWrapper, self).get_state(reduced=reduced)
+            state=np.concatenate((state,directions,distances))
+        else:
+            state=super(GameWrapper,self).get_state(reduced=False)
+            state=np.concatenate((state[0],state[1],state[2],directions,distances))
 
-        # If evaluating, take a random number of no-op steps.
-        # This adds an element of randomness, so that the each
-        # evaluation is slightly different.
-        if rand:
-            #catcher random start pos
-            catcher_pos=(random.randint(0,self.screen_size[0]-self.catcher.size),random.randint(0,self.screen_size[0]-self.catcher.size))
-            #runner random start position
-            runner_pos=(random.randint(0,self.screen_size[0]-self.runner.size),random.randint(0,self.screen_size[0]-self.runner.size))
-            while runner_pos==self.catcher.get_pos():#make sure the position of runner isn't the same as pos of catcher
-                runner_pos = (random.randint(0, self.screen_size[0]), random.randint(0, self.screen_size[0]))
-            self.catcher.set_pos(catcher_pos[0],catcher_pos[1])
-            self.runner.set_pos(runner_pos[0],runner_pos[1])
+        return state
+    def get_vision(self,catcher=True):#[N,NE,E,SE,S,SW,W,NW] for each of those, out of bounds:0,target:1,wall:2
+        #[N_distance,NE_distance,E_distance,SE_distance,S_distance,SW_distance,W_disstance,NW_distance]   with eucledian distances
+        directions=np.zeros((8,))
+        distances=np.zeros((8,))
+        if catcher:
+            player=self.catcher
+            target=self.runner
+        else:
+            player=self.runner
+            target=self.runner
+        #horizontal lines of sight
+        #E
+        player_pos=player.get_pos()
+        target_pos=target.get_pos()
+        x,y=player_pos[0],player_pos[1]
+        while True:
+            x=x+1
+            distance=calc_distance(player_pos,(x,y))
+            if x==self.screen_size[0]:
+                directions[2]=0
+                distances[2]=distance-1
+                break
+            elif (x,y)==target_pos:
+                directions[2]=1
+                distances[2]=distance-1
+                break
+            else:#check collision with walls
+                test_rect=pygame.Rect(x,y,1,1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[2]=2
+                    distances[2]=distance-1
+                    break
+        #W
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            x+=-1
+            distance=calc_distance(player_pos,(x,y))
+            if x<0:
+                directions[6]=0
+                distances[6]=distance-1
+                break
+            elif (x,y)==target_pos:
+                directions[6]=1
+                distances[6]=distance-1
+                break
+            else:#check collision with walls
+                test_rect=pygame.Rect(x,y,1,1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[6]=2
+                    distances[6]=distance-1
+                    break
+        #vertical directions
+        #N
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            y += -1
+            distance = calc_distance(player_pos, (x, y))
+            if y < 0:
+                directions[0] = 0
+                distances[0] = distance-1
+                break
+            elif (x, y) == target_pos:
+                directions[0] = 1
+                distances[0] = distance-1
+                break
+            else:  # check collision with walls
+                test_rect = pygame.Rect(x, y, 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[0] = 2
+                    distances[0] = distance - 1
+                    break
+
+        # S
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            y = y + 1
+            distance = calc_distance(player_pos, (x, y))
+            if y == self.screen_size[1]:
+                directions[4] = 0
+                distances[4] = distance-1
+                break
+            elif (x, y) == target_pos:
+                directions[4] = 1
+                distances[4] = distance-1
+                break
+            else:  # check collision with walls
+                test_rect = pygame.Rect(x, y, 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[4] = 2
+                    distances[4] = distance - 1
+                    break
+        #NE
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            y = y - 1
+            x=x+1
+            distance = calc_distance(player_pos, (x, y))
+            if x>=self.screen_size[1] or y<0:
+                directions[1] = 0
+                distances[1] = distance-np.sqrt(2)
+                break
+            elif (x, y) == target_pos:
+                directions[1] = 1
+                distances[1] = distance-np.sqrt(2)
+                break#
+            else:  # check collision with walls
+                test_rect = pygame.Rect(x, y, 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[1] = 2
+                    distances[1] = distance - np.sqrt(2)
+                    break
+        # SE
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            y = y + 1
+            x = x + 1
+            distance = calc_distance(player_pos, (x, y))
+            if x>=self.screen_size[1] or y>=self.screen_size[1]:
+                directions[3] = 0
+                distances[3] = distance-np.sqrt(2)
+                break
+            elif (x, y) == target_pos:
+                directions[3] = 1
+                distances[3] = distance-np.sqrt(2)
+                break
+            else:  # check collision with walls
+                test_rect = pygame.Rect(x, y, 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[3] = 2
+                    distances[3] = distance - np.sqrt(2)
+                    break
+        # SW
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            y = y + 1
+            x = x - 1
+            distance = calc_distance(player_pos, (x, y))
+            if x<0 or y>=self.screen_size[1]:
+                directions[5] = 0
+                distances[5] = distance-np.sqrt(2)
+                break
+            elif (x, y) == target_pos:
+                directions[5] = 1
+                distances[5] = distance-np.sqrt(2)
+                break
+            else:  # check collision with walls
+                test_rect = pygame.Rect(x, y, 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[5] = 2
+                    distances[5] = distance - np.sqrt(2)
+                    break
+        # NW
+        x,y=player_pos[0],player_pos[1]
+
+        while True:
+            y = y - 1
+            x = x - 1
+            distance = calc_distance(player_pos, (x, y))
+            if x < 0 or y < 0:
+                directions[7] = 0
+                distances[7] = distance - np.sqrt(2)
+                break
+            elif (x, y) == target_pos:
+                directions[7] = 1
+                distances[7] = distance - np.sqrt(2)
+                break
+            else:  # check collision with walls
+                test_rect = pygame.Rect(x, y, 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+                if collides_wall.any():
+                    directions[7] = 2
+                    distances[7] = distance - np.sqrt(2)
+                    break
+        #print(f'directions:{directions}')
+        #print(f'distances:{distances}')
+        return directions,distances
+
 
 def dense_layer(num_units):
   return Dense(
@@ -54,9 +240,10 @@ def dense_layer(num_units):
       kernel_initializer=VarianceScaling(
           scale=2.0, mode='fan_in', distribution='truncated_normal'))
 
-def build_q_network(n_actions, learning_rate, input_shape, screen_size):
+def build_q_network(layer_structure,n_actions, learning_rate, input_shape, screen_size):
     """Builds a  DQN as a Keras model
     Arguments:
+        layer_structure: number of nodes in each deep layer. E.g. (50,50)
         n_actions: Number of possible action the agent can take
         learning_rate: Learning rate
         input_shape: Shape of the preprocessed frame the model sees
@@ -64,11 +251,11 @@ def build_q_network(n_actions, learning_rate, input_shape, screen_size):
         A compiled Keras model
     """
     model_input = Input(shape=(input_shape[0],))
-    x = Lambda(lambda layer: layer / screen_size[0])(model_input)  # normalize by screen size
+    #x = Lambda(lambda layer: layer / screen_size[0])(model_input)  # normalize by screen size
+    x = dense_layer(layer_structure[0])(model_input)
+    for layer in layer_structure[1:]:
+        x = dense_layer(layer)(x)
 
-    x = dense_layer(50)(model_input)
-    x = dense_layer(50)(x)
-    x = dense_layer(50)(x)
     # Split into value and advantage streams
     # val_stream, adv_stream = Lambda(lambda w: tf.split(w, 2, 1))(x)  # custom splitting layer
     #
@@ -119,7 +306,7 @@ class ReplayBuffer:
         Arguments:
             action: An integer between 0 and env.action_space.n - 1
                 determining the action the agent perfomed
-            frame: A (8,1) state of the game
+            frame: A state of the game
             reward: A float determining the reward the agent received for performing an action
             terminal: A bool stating whether the episode terminated
         """
@@ -156,7 +343,7 @@ class ReplayBuffer:
                 if self.use_per:
                     index = np.random.choice(np.arange(0, self.count-2), p=sample_probabilities)
                 else:
-                    index = random.randint(0, self.count - 1)
+                    index = random.randint(0, self.count-2)
                 break
             indices.append(index)
 
@@ -215,10 +402,11 @@ class Agent(object):
                  replay_buffer_start_size,
                  use_per,
                  eps_annealing_frames,
+                 max_frames,
                  eps_initial=1,
-                 eps_final=0.1,
-                 eps_final_frame=0.01,
-                 max_frames=25000000):
+                 eps_final=0.3,
+                 eps_final_frame=0.1
+                 ):
         """
         Arguments:
             dqn: A DQN (returned by the DQN function) to predict moves
@@ -247,12 +435,13 @@ class Agent(object):
         self.replay_buffer = replay_buffer
 
         # Epsilon information
+        self.eps=eps_initial
         self.eps_initial = eps_initial
         self.eps_final = eps_final
         self.eps_final_frame = eps_final_frame
         self.eps_annealing_frames = eps_annealing_frames
 
-        # Slopes and intercepts for exploration decrease
+        # Slopes and intercepts for exploration decrease linearly
         # (Credit to Fabio M. Graetz for this and calculating epsilon based on frame number)
         self.slope = -(self.eps_initial - self.eps_final) / self.eps_annealing_frames
         self.intercept = self.eps_initial - self.slope*self.replay_buffer_start_size
@@ -291,7 +480,7 @@ class Agent(object):
         """
 
         eps = self.calc_epsilon(frame_number, evaluation)
-
+        self.eps=eps
         # With chance epsilon, take a random action
         if np.random.rand(1) < eps:
             return np.random.randint(0, self.n_actions)
@@ -299,32 +488,13 @@ class Agent(object):
         # Otherwise, query the DQN for an action
         q_vals = self.DQN.predict(state)[0]
         return q_vals.argmax()
-    def get_importance_bias(self,frame_number):
-        start=0.5
-        annealing_frame=75000
-        bias=(np.tanh(frame_number/750)*(1/2))+0.5
+    def calc_importance_bias(self,frame_number): #for PER, it increases linearly to 1 over the course of annealing_frame number of frames
+        start_bias=0.5
+        intercept=start_bias
+        slope=(1-start_bias)/self.eps_annealing_frames
+
+        bias=slope*(frame_number-self.replay_buffer_start_size)+intercept
         return bias
-
-    def get_intermediate_representation(self, state, layer_names=None):
-        """
-        Get the output of a hidden layer inside the model.  This will be/is used for visualizing model
-        Arguments:
-            state: The input to the model to get outputs for hidden layers from
-            layer_names: Names of the layers to get outputs from.  This can be a list of multiple names, or a single name
-        Returns:
-            Outputs to the hidden layers specified, in the order they were specified.
-        """
-        # Prepare list of layers
-        if isinstance(layer_names, list) or isinstance(layer_names, tuple):
-            layers = [self.DQN.get_layer(name=layer_name).output for layer_name in layer_names]
-        else:
-            layers = self.DQN.get_layer(name=layer_names).output
-
-        # Model for getting intermediate output
-        temp_model = tf.keras.Model(self.DQN.inputs, layers)
-
-        # Put it all together
-        return temp_model.predict(state.reshape((-1, self.input_shape[0], self.input_shape[1], 1)))
 
     def update_target_network(self):
         """Update the target Q network"""
@@ -348,7 +518,7 @@ class Agent(object):
         if self.use_per:
             (states, actions, rewards, new_states,terminal_flags), importance, indices = self.replay_buffer.get_minibatch(batch_size=self.batch_size,
                                                                        priority_scale=priority_scale)
-            importance = importance ** (self.get_importance_bias(frame_number))
+            importance = importance ** (self.calc_importance_bias(frame_number))
         else:
             states, actions, rewards, new_states, terminal_flags = self.replay_buffer.get_minibatch(batch_size=self.batch_size)
         # Main DQN estimates best action in new states
@@ -402,7 +572,7 @@ class Agent(object):
 
         # Save meta
         with open(folder_name + '/meta.json', 'w+') as f:
-            f.write(json.dumps({**{'buff_count': self.replay_buffer.count, 'buff_curr': self.replay_buffer.current}, **kwargs}))  # save replay_buffer information and any other information
+            f.write(json.dumps({**{'buff_count': self.replay_buffer.count, 'buff_curr': self.replay_buffer.current,'eps':self.eps}, **kwargs}))  # save replay_buffer information and any other information
 
     def load(self, folder_name, load_replay_buffer=True):
         """Load a previously saved Agent from a folder
@@ -434,3 +604,54 @@ class Agent(object):
 
         del meta['buff_count'], meta['buff_curr']  # we don't want to return this information
         return meta
+
+def test():
+    from game.Player import Runner,Catcher
+    import pygame
+    import time
+
+    screen_size=(5,5)
+    init_catcher_pos=(3,2)
+    init_runner_pos=(0,1)
+    len_scale_factor=100
+
+    #game parameters
+    player_size=1
+    walls1 = np.array([[1, 0, 1, 2], [3, 2, 2, 1]])  # constructed on a 5x5 grid
+    walls=(walls1/5)*screen_size[0]   #scale the walls according to screen size
+    player_a=1
+    #set up the player objects
+    catcher=Catcher(init_catcher_pos[0],init_catcher_pos[1],[255,0,0],player_size)
+    runner=Runner(init_runner_pos[0],init_runner_pos[1],[0,0,255],player_size)
+    pygame.init()
+    # Set up the display
+    pygame.display.set_caption("Tag")
+    screen = pygame.display.set_mode((screen_size[0]*len_scale_factor, screen_size[1]*len_scale_factor))
+    #init gym environment
+    env = GameWrapper(catcher,runner,wall_list=walls,screen_size=screen_size,acceleration=player_a,screen=screen,init_catcher_pos=init_catcher_pos,init_runner_pos=init_runner_pos)
+
+    for i in range(100):
+        observation = env.reset(rand=True)
+        env.get_state(catcher=True)
+        env.render(len_scale_factor=len_scale_factor)
+        time.sleep(3)
+
+
+    # env.get_state(catcher=True)
+    # env.render(len_scale_factor=len_scale_factor)
+    #
+    # for t in range(10000):
+    #         time.sleep(0.1)
+    #         action = env.action_space.sample()
+    #         observation, reward, done, info = env.step(action)
+    #         print(f'action:{action}   reward:{reward}')
+    #         print(observation)
+    #         env.render(len_scale_factor=len_scale_factor)
+    #         time.sleep(3)
+    #
+    #         if done:
+    #             print("Finished after {} timesteps".format(t+1))
+    #             env.reset()
+    #             time.sleep(2)
+    #             break
+

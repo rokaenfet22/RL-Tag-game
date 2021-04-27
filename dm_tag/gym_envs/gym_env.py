@@ -19,6 +19,7 @@ class TagEnv(gym.Env):
         self.a=acceleration
         self.runner = runner
         self.wall_list = wall_list
+        self.wall_rects=[pygame.Rect(wall[0], wall[1], wall[2], wall[3]) for wall in self.wall_list]
         self.screen_size=np.array(screen_size)
         self.screen=screen
         self.state=self.get_init_state()
@@ -54,14 +55,21 @@ class TagEnv(gym.Env):
         prev_state=self.state
         if action==0:#UP
             player.accelerate(0, -self.a)
+            dx,dy=0,-1
         elif action==1:#RIGHT
             player.accelerate(self.a, 0)
+            dx,dy=1,0
+
         elif action==2:#DOWN
             player.accelerate(0, self.a)
+            dx,dy=0,1
+
         elif action==3:#LEFT
+            dx,dy=-1,0
+
             player.accelerate(-self.a, 0)
 
-        has_collided= player.move(self.screen_size, self.wall_list)
+        has_collided= player.move(self.screen_size, self.wall_list,dx=dx,dy=dy)
         info={}
         if self.catcher.rect.colliderect(self.runner):
             done=True
@@ -69,7 +77,7 @@ class TagEnv(gym.Env):
             done=False
 
 
-        self.state=self.get_state()
+        self.state=self.get_state(reduced=False)
         if done:
             if catcher:
                 reward=100000
@@ -81,15 +89,48 @@ class TagEnv(gym.Env):
                 reward=-100
         return self.state,reward,done,info
 
-    def reset(self):
-        state=self.get_init_state()
-        self.catcher.set_pos(self.init_catcher_pos[0],self.init_catcher_pos[1])
-        self.runner.set_pos(self.init_runner_pos[0],self.init_runner_pos[1])
-        self.state=state
+    def reset(self,rand=False):
+        if rand:
+            #catcher random start pos
+
+            catcher_pos=((random.randint(0,self.screen_size[0]-self.catcher.size),random.randint(0,self.screen_size[0]-self.catcher.size)))
+            #make sure the random generated position is not inside a wall
+            test_rect=pygame.Rect(catcher_pos[0],catcher_pos[1],1,1)
+            while True:
+                collides_wall=False
+                for wall_rect in self.wall_rects:
+                    if wall_rect.colliderect(test_rect):#if the position is inside a wall
+                        collides_wall=True
+                        break
+                if not collides_wall:
+                    break
+                else:
+                    catcher_pos = ((random.randint(0, self.screen_size[0] - self.catcher.size),
+                                    random.randint(0, self.screen_size[0] - self.catcher.size)))
+                    test_rect = pygame.Rect(catcher_pos[0], catcher_pos[1], 1, 1)
+
+            #runner random start position
+            runner_pos=np.array((random.randint(0,self.screen_size[0]-self.runner.size),random.randint(0,self.screen_size[0]-self.runner.size)))
+            test_rect=pygame.Rect(runner_pos[0],runner_pos[1],1,1)
+            collides_wall=np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+            while np.linalg.norm(runner_pos-catcher_pos)<=1 or collides_wall.any():#make sure the runner isn't within distance of <=1 of catcher so that we have more consistency in the rounds
+                runner_pos = np.array((random.randint(0, self.screen_size[0]-self.runner.size), random.randint(0, self.screen_size[0]-self.runner.size)))
+                test_rect = pygame.Rect(runner_pos[0], runner_pos[1], 1, 1)
+                collides_wall = np.array([test_rect.colliderect(wall_rect) for wall_rect in self.wall_rects])
+
+            self.catcher.set_pos(catcher_pos[0],catcher_pos[1])
+            self.runner.set_pos(runner_pos[0],runner_pos[1])
+            self.state=self.get_state()
+        else:
+
+            state=self.get_init_state()
+            self.catcher.set_pos(self.init_catcher_pos[0],self.init_catcher_pos[1])
+            self.runner.set_pos(self.init_runner_pos[0],self.init_runner_pos[1])
+            self.state=state
+
         self.runner.reset_v()
         self.catcher.reset_v()
         return self.state
-
 
 
     # def calculate_reward(self,catcher=True):
@@ -110,28 +151,40 @@ class TagEnv(gym.Env):
         distance = float((np.sum((catcher_pos - runner_pos) ** 2)) ** (1 / 2))
         if prev_distance>distance:
             if catcher:
-                return reward
+                return 1000
             else:
-                return -reward
+                return -10000
         elif prev_distance<distance:
             if catcher:
-                return -reward
+                return -1000
             else:
-                return reward
+                return 10000
         else:
             if catcher:
-                return -10
+                return 0
             else:
-                return 10
+                return 1000
 
-    def get_state(self):
-        '''reduced state format. Doesn't account for walls
-        [catcher_x,catcher_y,runner_x,runner_y,catcher_vx,catcher_vy,runner_vx,runner_vy]
-        '''
-        state = [self.catcher.get_pos()[0], self.catcher.get_pos()[1], self.runner.get_pos()[0],
-                 self.runner.get_pos()[1], self.catcher.get_v()[0], self.catcher.get_v()[1],
-                 self.runner.get_v()[0], self.runner.get_v()[1]]
-        return np.array(state)
+    def get_state(self,reduced=True):
+        if reduced:
+            '''reduced state format. Doesn't account for walls
+            [catcher_x,catcher_y,runner_x,runner_y]
+            '''
+            state = [self.catcher.get_pos()[0], self.catcher.get_pos()[1], self.runner.get_pos()[0],self.runner.get_pos()[1]]
+            return np.array(state)
+        else:
+            ''' full state format: max 2 walls
+                    [wall1,
+                    wall2,
+                    [catcher_x,catcher_y,runner_x,runner_y],   
+                    ]
+                    '''
+            state=[]
+            for wall in self.wall_list:
+                state.append(wall)
+            state.append([self.catcher.get_pos()[0], self.catcher.get_pos()[1], self.runner.get_pos()[0],self.runner.get_pos()[1]])
+            return np.array(state)
+
     def get_init_state(self):
         '''reduced state format. Doesn't account for walls
         [catcher_x,catcher_y,runner_x,runner_y,catcher_vx,catcher_vy,runner_vx,runner_vy]
@@ -161,17 +214,17 @@ class TagEnv(gym.Env):
 
     def close(self):
         pass
-# screen_size=(10,10)
-# init_catcher_pos=(8,8)
-# init_runner_pos=(9,9)
+# screen_size=(5,5)
+# init_catcher_pos=(1,1)
+# init_runner_pos=(4,4)
 # max_walls=7
-# len_scale_factor=10
+# len_scale_factor=100
 #
 # #game parameters
 # player_size=1
-# wall_thickness=1
-# walls1=np.array([[0, 2, 3, 1], [2, 3, 1, 2], [4, 4,1, 3], [6, 2, 4, 1], [2,8, 3, 1]])  #constructed on a 10x10 grid
-# walls=(walls1/10)*screen_size[0]   #scale the walls according to screen size
+#
+# walls1=np.array([[1, 0, 1, 3], [3,2,2,1]])  #constructed on a 5x5 grid
+# walls=(walls1/5)*screen_size[0]   #scale the walls according to screen size
 # player_a=1
 # #set up the player objects
 # catcher=Catcher(init_catcher_pos[0],init_catcher_pos[1],[255,0,0],player_size)
@@ -183,21 +236,21 @@ class TagEnv(gym.Env):
 # #init gym environment
 # env = TagEnv(catcher,runner,wall_list=walls,screen_size=screen_size,acceleration=player_a,screen=screen,init_catcher_pos=init_catcher_pos,init_runner_pos=init_runner_pos)
 #
-# observation = env.reset()
-# env.render(len_scale_factor=len_scale_factor)
-# time.sleep(2)
-# print(catcher.rect.colliderect(runner.rect))
-# for t in range(10000):
-#         time.sleep(0.1)
-#         action = env.action_space.sample()
-#         print(action)
-#         observation, reward, done, info = env.step(action)
-#         print (observation, reward, done, info)
-#         env.render(len_scale_factor=len_scale_factor)
-#
-#         if done:
-#             print("Finished after {} timesteps".format(t+1))
-#             env.reset()
-#             time.sleep(2)
-#             break
+# for i in range(100):
+#     observation = env.reset(rand=True)
+#     env.render(len_scale_factor=len_scale_factor)
+#     time.sleep(0.1)
+# # for t in range(10000):
+# #         time.sleep(0.1)
+# #         action = env.action_space.sample()
+# #         print(action)
+# #         observation, reward, done, info = env.step(action)
+# #         print (observation, reward, done, info)
+# #         env.render(len_scale_factor=len_scale_factor)
+# #
+# #         if done:
+# #             print("Finished after {} timesteps".format(t+1))
+# #             env.reset()
+# #             time.sleep(2)
+# #             break
 #

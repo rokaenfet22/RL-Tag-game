@@ -7,9 +7,6 @@ def train():
     SAVE_PATH = 'saved_models/tag1/navigation'
     LOAD_REPLAY_BUFFER = True
 
-    WRITE_TENSORBOARD = False
-    TENSORBOARD_DIR = 'tensorboard/'
-
     USE_PER=True                     # Use Priority Experience Replay
     PRIORITY_SCALE=0.5               #How much to weight priorities when sampling the replay buffer. 0 = completely random, 1 = completely based on priority
     #hyper
@@ -17,22 +14,20 @@ def train():
     MAX_EPISODE_LENGTH = 50       # Maximum length of an episode (in frames).  18000 frames / 60 fps = 5 minutes
     FRAMES_BETWEEN_EVAL = 5000     # Number of frames between evaluations
     EVAL_LENGTH = 500              # Number of frames to evaluate for
-    eps_annealing_frames=100000
-    DISCOUNT_FACTOR = 0.4            # Gamma, how much to discount future rewards
+    eps_annealing_frames=75000
+
+    DISCOUNT_FACTOR = 0.3            # Gamma, how much to discount future rewards
     MIN_REPLAY_BUFFER_SIZE = 400    # The minimum size the replay buffer must be before we start to update the agent
     MEM_SIZE = 1000000                # The maximum size of the replay buffer
 
-    MAX_NOOP_STEPS = 1               # Randomly perform this number of actions before every evaluation to give it an element of randomness
-    UPDATE_FREQ = 1                   # Number of actions between gradient descent steps
+    UPDATE_FREQ = 2                   # Number of actions between gradient descent steps
     TARGET_UPDATE_FREQ = 50         # Number of actions between when the target network is updated
 
     INPUT_SHAPE = (8,)            # Size of the preprocessed input frame. With the current model architecture, anything below ~80 won't work.
     screen_size = (5, 5)
     BATCH_SIZE = 4               # Number of samples the agent learns from at once
     LEARNING_RATE = 0.001
-    STALLING_PENALTY = 0.05*screen_size[0]   #penalty for every step the agent takes. Proportional to the frame number
 
-    writer = tf.summary.create_file_writer(TENSORBOARD_DIR)
     #ENV details
 
     init_catcher_pos=(1,1)
